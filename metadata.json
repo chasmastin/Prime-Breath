@@ -1,0 +1,7 @@
+{
+  "name": "Prime Breath",
+  "description": "A prime number visualization meditation tool. Choose a visualization and a breathing exercise to begin your journey into the patterns of primes.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

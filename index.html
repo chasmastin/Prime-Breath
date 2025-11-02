@@ -1,0 +1,1725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Prime Breath</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      html, body {
+        overscroll-behavior: none;
+        overflow: hidden;
+      }
+    </style>
+</head>
+<body class="bg-gray-900">
+    <div id="root"></div>
+    <script type="text/babel">
+/*
+MIT License
+
+Copyright (c) 2024 Prime Breath Authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+// --- SCRIPT START ---
+
+// Base React hooks
+const { useState, useEffect, useCallback, useRef, useMemo } = React;
+
+// Inlined from services/primeService.ts
+let primeSieve = [];
+let sieveLimit = -1;
+const getPrimeSieve = (limit) => {
+  if (limit <= sieveLimit) {
+    return primeSieve;
+  }
+  
+  sieveLimit = limit;
+  const sieve = new Array(limit + 1).fill(true);
+  sieve[0] = sieve[1] = false;
+  for (let i = 2; i * i <= limit; i++) {
+    if (sieve[i]) {
+      for (let j = i * i; j <= limit; j += i) {
+        sieve[j] = false;
+      }
+    }
+  }
+  primeSieve = sieve;
+  return primeSieve;
+};
+
+// --- START SHARED UTILS ---
+const FADE_DURATION_IN_OUT = 1500;
+const calculateFadeOpacity = (timeInPhase, phaseDuration) => {
+    if (phaseDuration <= FADE_DURATION_IN_OUT * 2) {
+        const half = phaseDuration / 2;
+        if (timeInPhase < half) return Math.max(0, timeInPhase / half);
+        return Math.max(0, (phaseDuration - timeInPhase) / half);
+    }
+    if (timeInPhase < FADE_DURATION_IN_OUT) return timeInPhase / FADE_DURATION_IN_OUT;
+    if (timeInPhase > phaseDuration - FADE_DURATION_IN_OUT) return (phaseDuration - timeInPhase) / FADE_DURATION_IN_OUT;
+    return 1.0;
+};
+
+const applyShader = (ctx, shader, timestamp) => {
+    if (shader === 'None') return;
+
+    const canvas = ctx.canvas;
+    const { width, height } = canvas;
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCanvas.width = width;
+    tempCanvas.height = height;
+
+    // --- Shader Logic ---
+    switch (shader) {
+        case 'Bloom':
+            tempCtx.filter = 'blur(8px) brightness(1.5)';
+            tempCtx.drawImage(canvas, 0, 0);
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.globalAlpha = 0.5;
+            ctx.drawImage(tempCanvas, 0, 0);
+            break;
+        case 'Neon':
+            tempCtx.filter = 'blur(12px) brightness(2) saturate(2)';
+            tempCtx.drawImage(canvas, 0, 0);
+            tempCtx.filter = 'blur(2px) brightness(1.5) saturate(1.5)';
+            tempCtx.drawImage(canvas, 0, 0);
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.drawImage(tempCanvas, 0, 0);
+            break;
+        case 'Vignette':
+            const gradientVignette = ctx.createRadialGradient(width / 2, height / 2, width / 4, width / 2, height / 2, width / 2);
+            gradientVignette.addColorStop(0, 'rgba(0,0,0,0)');
+            gradientVignette.addColorStop(1, 'rgba(0,0,0,0.7)');
+            ctx.fillStyle = gradientVignette;
+            ctx.fillRect(0, 0, width, height);
+            break;
+        case 'Film Grain':
+            for (let i = 0; i < 2000; i++) {
+                ctx.fillStyle = `rgba(255, 255, 255, ${Math.random() * 0.1})`;
+                ctx.fillRect(Math.random() * width, Math.random() * height, 1, 1);
+            }
+            break;
+        case 'Echo Spin': {
+            const layers = 5;
+            const pulseDuration = 5000;
+
+            // 1. Copy canvas to a temporary canvas
+            tempCtx.drawImage(canvas, 0, 0);
+
+            // 2. Apply a circular vignette to the temp canvas to hide edges when rotating
+            const centerX = width / 2;
+            const centerY = height / 2;
+            const outerRadius = Math.min(width, height) / 2;
+            const innerRadius = outerRadius * 0.7;
+            
+            const gradient = tempCtx.createRadialGradient(centerX, centerY, innerRadius, centerX, centerY, outerRadius);
+            gradient.addColorStop(0, 'rgba(0,0,0,1)'); // Opaque center
+            gradient.addColorStop(1, 'rgba(0,0,0,0)'); // Transparent edge
+            
+            tempCtx.globalCompositeOperation = 'destination-in';
+            tempCtx.fillStyle = gradient;
+            tempCtx.fillRect(0, 0, width, height);
+            tempCtx.globalCompositeOperation = 'source-over'; // reset
+
+            // 3. Draw the layered, expanding, rotating echoes
+            ctx.globalCompositeOperation = 'lighter';
+            
+            for (let i = 0; i < layers; i++) {
+                // Each layer is a different "wave" of the pulse, offset in time
+                const pulseProgress = ((timestamp / pulseDuration) + (i / layers)) % 1;
+                
+                // Use an easing function for a more natural expansion
+                const easedProgress = 1 - Math.pow(1 - pulseProgress, 3); // easeOutCubic
+
+                // Scale expands as the pulse progresses
+                const scale = 1.0 + easedProgress * 0.5;
+                
+                // Alpha fades out as the pulse progresses
+                const alpha = Math.max(0, (1 - pulseProgress) * 0.4);
+                
+                // Slow continuous rotation, slightly different for each layer
+                const angle = (timestamp / 25000) * (i + 1);
+
+                ctx.globalAlpha = alpha;
+                ctx.filter = `blur(${easedProgress * 6}px)`;
+
+                ctx.save();
+                ctx.translate(width / 2, height / 2);
+                ctx.rotate(angle);
+                ctx.scale(scale, scale);
+                ctx.translate(-width / 2, -height / 2);
+                ctx.drawImage(tempCanvas, 0, 0); // Draw the vignetted temp canvas
+                ctx.restore();
+            }
+            break;
+        }
+    }
+
+    // --- Reset context state ---
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1.0;
+    ctx.filter = 'none';
+};
+
+const useUnifiedInteraction = (canvasRef, viewState, setViewState) => {
+    const isInteracting = useRef(false);
+    const interactionStart = useRef({ pointers: [], view: viewState });
+
+    const getEventCoordinates = (e) => {
+        if (e.touches) {
+            return Array.from(e.touches).map(t => ({ x: t.clientX, y: t.clientY }));
+        }
+        return [{ x: e.clientX, y: e.clientY }];
+    };
+
+    const handleInteractionStart = useCallback((e) => {
+        e.preventDefault();
+        isInteracting.current = true;
+        interactionStart.current = {
+            pointers: getEventCoordinates(e),
+            view: viewState,
+        };
+        if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
+    }, [viewState, canvasRef]);
+
+    const handleInteractionMove = useCallback((e) => {
+        if (!isInteracting.current) return;
+        e.preventDefault();
+
+        const currentPointers = getEventCoordinates(e);
+        const startPointers = interactionStart.current.pointers;
+        const startView = interactionStart.current.view;
+        
+        if (currentPointers.length !== startPointers.length) {
+            interactionStart.current = { pointers: currentPointers, view: viewState };
+            return;
+        }
+
+        if (currentPointers.length === 1) { // Pan
+            const dx = currentPointers[0].x - startPointers[0].x;
+            const dy = currentPointers[0].y - startPointers[0].y;
+            setViewState({ ...startView, x: startView.x + dx, y: startView.y + dy });
+        } else if (currentPointers.length >= 2) { // Pinch & Pan
+            const p1Start = startPointers[0];
+            const p2Start = startPointers[1];
+            const p1Now = currentPointers[0];
+            const p2Now = currentPointers[1];
+
+            const distStart = Math.hypot(p1Start.x - p2Start.x, p1Start.y - p2Start.y);
+            const distNow = Math.hypot(p1Now.x - p2Now.x, p1Now.y - p2Now.y);
+            const scale = distStart > 0 ? distNow / distStart : 1;
+            const newZoom = Math.max(0.01, Math.min(startView.zoom * scale, 100));
+
+            const midStart = { x: (p1Start.x + p2Start.x) / 2, y: (p1Start.y + p2Start.y) / 2 };
+            const midNow = { x: (p1Now.x + p2Now.x) / 2, y: (p1Now.y + p2Now.y) / 2 };
+
+            const newX = midNow.x - (midStart.x - startView.x) * (newZoom / startView.zoom);
+            const newY = midNow.y - (midStart.y - startView.y) * (newZoom / startView.zoom);
+
+            setViewState({ zoom: newZoom, x: newX, y: newY });
+        }
+    }, [viewState, setViewState]);
+
+    const handleInteractionEnd = useCallback((e) => {
+        isInteracting.current = false;
+        if (canvasRef.current) canvasRef.current.style.cursor = 'grab';
+    }, [canvasRef]);
+    
+     const handleWheel = useCallback((e) => {
+        e.preventDefault();
+        if (!canvasRef.current) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        const zoomFactor = 1.1;
+        const delta = e.deltaY > 0 ? 1 / zoomFactor : zoomFactor;
+        setViewState(prev => {
+          const newZoom = Math.max(0.01, Math.min(prev.zoom * delta, 100));
+          const newX = mouseX - (mouseX - prev.x) * (newZoom / prev.zoom);
+          const newY = mouseY - (mouseY - prev.y) * (newZoom / prev.zoom);
+          return { x: newX, y: newY, zoom: newZoom };
+        });
+    }, [setViewState]);
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        canvas.addEventListener('mousedown', handleInteractionStart, { passive: false });
+        canvas.addEventListener('mousemove', handleInteractionMove, { passive: false });
+        canvas.addEventListener('mouseup', handleInteractionEnd);
+        canvas.addEventListener('mouseleave', handleInteractionEnd);
+        canvas.addEventListener('wheel', handleWheel, { passive: false });
+        
+        canvas.addEventListener('touchstart', handleInteractionStart, { passive: false });
+        canvas.addEventListener('touchmove', handleInteractionMove, { passive: false });
+        canvas.addEventListener('touchend', handleInteractionEnd);
+        canvas.addEventListener('touchcancel', handleInteractionEnd);
+
+        return () => {
+            canvas.removeEventListener('mousedown', handleInteractionStart);
+            canvas.removeEventListener('mousemove', handleInteractionMove);
+            canvas.removeEventListener('mouseup', handleInteractionEnd);
+            canvas.removeEventListener('mouseleave', handleInteractionEnd);
+            canvas.removeEventListener('wheel', handleWheel);
+
+            canvas.removeEventListener('touchstart', handleInteractionStart);
+            canvas.removeEventListener('touchmove', handleInteractionMove);
+            canvas.removeEventListener('touchend', handleInteractionEnd);
+            canvas.removeEventListener('touchcancel', handleInteractionEnd);
+        };
+    }, [canvasRef, handleInteractionStart, handleInteractionMove, handleInteractionEnd, handleWheel]);
+};
+// --- END SHARED UTILS ---
+
+
+// Inlined from components/Controls.tsx
+const Controls = ({
+  value,
+  setValue,
+  mode,
+  colorTheme,
+  setColorTheme,
+  animationStyle,
+  setAnimationStyle,
+  shader,
+  setShader,
+  showBreathingText,
+  setShowBreathingText,
+  showJourneyPrime,
+  setShowJourneyPrime,
+  isHarmonic,
+  setIsHarmonic,
+  uiVisible,
+}) => {
+  const maxLimit = 20000;
+  const step = 100;
+
+  return (
+    <div
+      className={`absolute bottom-4 left-1/2 -translate-x-1/2 z-10 bg-gray-800 bg-opacity-70 backdrop-blur-sm p-4 rounded-lg shadow-lg w-11/12 max-w-4xl transition-opacity duration-500 ${
+        uiVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+      }`}
+    >
+      <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+        <label htmlFor="max-number-slider" className="font-medium text-gray-200 whitespace-nowrap">
+          Number Limit: <span className="font-bold text-yellow-300 w-20 inline-block text-center">{value}</span>
+        </label>
+        <input
+          id="max-number-slider"
+          type="range"
+          min="100"
+          max={mode === 'wave-field' ? 800 : maxLimit}
+          step={step}
+          value={value}
+          onChange={(e) => setValue(parseInt(e.target.value, 10))}
+          className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-yellow-400"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
+        <div className="flex items-center gap-2">
+          <label htmlFor="color-theme-select" className="font-medium text-gray-200 whitespace-nowrap">Theme:</label>
+          <select id="color-theme-select" value={colorTheme} onChange={(e) => setColorTheme(e.target.value)} className="w-full bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-yellow-500 focus:border-yellow-500 p-2">
+            <option>Spectrum</option><option>Ocean</option><option>Sunset</option><option>Forest</option><option>Earth</option><option>Autumn</option><option>Cyberpunk</option><option>Vaporwave</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <label htmlFor="animation-style-select" className="font-medium text-gray-200 whitespace-nowrap">Animation:</label>
+          <select id="animation-style-select" value={animationStyle} onChange={(e) => setAnimationStyle(e.target.value)} className="w-full bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-yellow-500 focus:border-yellow-500 p-2">
+            <option value="Slow">Slow</option><option value="Pulse">Pulse</option><option value="Breathe (4-7-8)">Breathe (4-7-8)</option><option value="Breathe (Box)">Breathe (Box)</option><option value="Breathe (Resonant)">Breathe (Resonant)</option><option value="Breathing Journey">Breathing Journey</option><option value="Sound Activated">Sound Activated</option>
+          </select>
+        </div>
+         <div className="flex items-center gap-2">
+          <label htmlFor="shader-select" className="font-medium text-gray-200 whitespace-nowrap">Shader:</label>
+          <select id="shader-select" value={shader} onChange={(e) => setShader(e.target.value)} className="w-full bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-yellow-500 focus:border-yellow-500 p-2">
+            <option>None</option><option>Bloom</option><option>Neon</option><option>Vignette</option><option>Film Grain</option><option>Echo Spin</option>
+          </select>
+        </div>
+      </div>
+      <div className="mt-4 flex justify-center items-center gap-x-6 gap-y-2 flex-wrap">
+        <div className="flex items-center gap-3">
+          <label htmlFor="breathing-text-toggle" className="font-medium text-gray-200">Breathing Cues</label>
+          <button id="breathing-text-toggle" onClick={() => setShowBreathingText(!showBreathingText)} className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-yellow-500 ${showBreathingText ? 'bg-yellow-400' : 'bg-gray-600'}`} role="switch" aria-checked={showBreathingText}>
+            <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${showBreathingText ? 'translate-x-6' : 'translate-x-1'}`}/>
+          </button>
+        </div>
+        
+        {animationStyle === 'Breathing Journey' && (
+          <div className="flex items-center gap-3">
+            <label htmlFor="journey-prime-toggle" className="font-medium text-gray-200">Show Prime Number</label>
+            <button id="journey-prime-toggle" onClick={() => setShowJourneyPrime(!showJourneyPrime)} className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-yellow-500 ${showJourneyPrime ? 'bg-yellow-400' : 'bg-gray-600'}`} role="switch" aria-checked={showJourneyPrime}>
+              <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${showJourneyPrime ? 'translate-x-6' : 'translate-x-1'}`}/>
+            </button>
+          </div>
+        )}
+        
+        <div className="flex items-center gap-3">
+            <label htmlFor="harmonic-toggle" className="font-medium text-gray-200">Harmonic</label>
+            <button id="harmonic-toggle" onClick={() => setIsHarmonic(!isHarmonic)} className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-yellow-500 ${isHarmonic ? 'bg-yellow-400' : 'bg-gray-600'}`} role="switch" aria-checked={isHarmonic}>
+                <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${isHarmonic ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
+// Inlined from components/PrimeSpiral.tsx
+const pointSpacing = 12;
+const primeRadius = (pointSpacing * 0.7) / 2;
+const nonPrimeRadius = (pointSpacing * 0.3) / 2;
+const primeColor = '#FFD700';
+const nonPrimeColor = '#444455';
+
+const colorPalettes = {
+  Spectrum: (i, offset) => -i * 2 + offset,
+  Ocean: (i, offset) => 200 + Math.sin((i + offset * 0.1) * 0.05) * 40,
+  Sunset: (i, offset) => 30 + Math.sin((i + offset * 0.1) * 0.04) * 30,
+  Forest: (i, offset) => 120 + Math.sin((i + offset * 0.1) * 0.05) * 30,
+  Earth: (i, offset) => 80 + Math.sin((i + offset * 0.05) * 0.1) * 20, // Greens and browns
+  Autumn: (i, offset) => 30 + Math.sin((i + offset * 0.1) * 0.04) * 30, // Oranges and reds
+  Cyberpunk: (i, offset) => 300 + Math.sin((i + offset * 0.1) * 0.03) * 60, // Pinks and purples
+  Vaporwave: (i, offset) => 270 + Math.sin((i + offset * 0.1) * 0.05) * 40, // Pinks and blues
+};
+
+const PrimeSpiral = ({ count, animationStyle, colorTheme, shader, showBreathingText, showJourneyPrime, isHarmonic }) => {
+  const canvasRef = useRef(null);
+  const parentRef = useRef(null);
+  const [viewState, setViewState] = useState({ x: 0, y: 0, zoom: 0.5 });
+  const animationFrameId = useRef();
+  const highlightProgressRef = useRef(0);
+  const animationDirectionRef = useRef('forward');
+  const timeRef = useRef(0);
+  const animationStateRef = useRef({ cycleStartTimestamp: 0 });
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const audioStreamRef = useRef(null);
+  const localEaseInOutSine = (x) => -(Math.cos(Math.PI * x) - 1) / 2;
+
+  useUnifiedInteraction(canvasRef, viewState, setViewState);
+
+  const { pointMap, primes, primeNumberToIndex } = useMemo(() => {
+    const maxCount = 250000;
+    const primeSieve = getPrimeSieve(maxCount);
+
+    const map = new Map();
+    const primePoints = [];
+    const primeIndexMap = new Map();
+    let x = 0, y = 0, dx = 1, dy = 0;
+    let segmentLength = 1, segmentPassed = 0, turnCounter = 0;
+
+    for (let i = 1; i <= maxCount; i++) {
+      const point = { x, y, number: i, isPrime: primeSieve[i] };
+      map.set(`${x}|${y}`, point);
+      if (point.isPrime) {
+        primeIndexMap.set(point.number, primePoints.length);
+        primePoints.push(point);
+      }
+      x += dx; y += dy; segmentPassed++;
+      if (segmentPassed === segmentLength) {
+        segmentPassed = 0; [dx, dy] = [-dy, dx]; turnCounter++;
+        if (turnCounter === 2) { turnCounter = 0; segmentLength++; }
+      }
+    }
+    return { pointMap: map, primes: primePoints, primeNumberToIndex: primeIndexMap };
+  }, []);
+
+    const resetViewState = useCallback(() => {
+        if (parentRef.current) {
+            const { width, height } = parentRef.current.getBoundingClientRect();
+            const spiralDiameter = Math.sqrt(count) * pointSpacing * 1.2;
+            const newZoom = Math.min(width / spiralDiameter, height / spiralDiameter);
+            setViewState({ x: width / 2, y: height / 2, zoom: newZoom });
+        }
+    }, [count]);
+    
+  useEffect(() => {
+      resetViewState();
+  }, [count, resetViewState]);
+  
+  useEffect(() => {
+    animationStateRef.current.cycleStartTimestamp = timeRef.current;
+    if (animationStyle !== 'Sound Activated') {
+        highlightProgressRef.current = 0;
+        animationDirectionRef.current = 'forward';
+    }
+  }, [animationStyle]);
+
+  useEffect(() => {
+    const setupAudio = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioStreamRef.current = stream;
+        const context = new (window.AudioContext || window.webkitAudioContext)();
+        audioContextRef.current = context;
+        const source = context.createMediaStreamSource(stream);
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 32;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+      } catch (err) {
+        console.error('Microphone access denied:', err);
+      }
+    };
+    const cleanupAudio = () => {
+      audioStreamRef.current?.getTracks().forEach(track => track.stop());
+      audioStreamRef.current = null;
+      audioContextRef.current?.close();
+      audioContextRef.current = null;
+      analyserRef.current = null;
+    };
+    if (animationStyle === 'Sound Activated') {
+      setupAudio();
+    }
+    return cleanupAudio;
+  }, [animationStyle]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let animationRunning = true;
+    
+    const draw = (timestamp) => {
+      if (!animationRunning) return;
+      timeRef.current = timestamp;
+       if (animationStateRef.current.cycleStartTimestamp === 0) {
+        animationStateRef.current.cycleStartTimestamp = timestamp;
+      }
+
+      let progressRate = 0;
+      let breathingCue = '';
+      let fadeOpacity = 1.0;
+      let newestPrimeValue = -1;
+      let fadeInProgress = 1.0;
+
+      switch (animationStyle) {
+        case 'Slow': progressRate = 0.1; break;
+        case 'Pulse': progressRate = (1 + Math.sin(timestamp / 300)) * 0.5; break;
+        case 'Breathe (Resonant)': {
+          const period = 10000;
+          const phaseDuration = period / 2;
+          const phase = (timestamp * 2 * Math.PI) / period;
+          progressRate = 0.15 * (1 + Math.sin(phase));
+          const cycleTime = (timestamp - animationStateRef.current.cycleStartTimestamp) % period;
+          const timeInPhase = cycleTime % phaseDuration;
+          fadeOpacity = calculateFadeOpacity(timeInPhase, phaseDuration);
+          breathingCue = cycleTime < phaseDuration ? 'INHALE' : 'EXHALE';
+          break;
+        }
+        case 'Breathe (4-7-8)': {
+          const cycleDuration = 19000;
+          const cycleProgress = (timestamp - animationStateRef.current.cycleStartTimestamp) % cycleDuration;
+          const inhaleDuration = 4000;
+          const holdDuration = 7000;
+          const exhaleDuration = 8000;
+          
+          if (cycleProgress < inhaleDuration) {
+            progressRate = 0.2; breathingCue = 'INHALE';
+            fadeOpacity = calculateFadeOpacity(cycleProgress, inhaleDuration);
+          } else if (cycleProgress < inhaleDuration + holdDuration) {
+            progressRate = 0; breathingCue = 'HOLD';
+            const timeInPhase = cycleProgress - inhaleDuration;
+            fadeOpacity = calculateFadeOpacity(timeInPhase, holdDuration);
+          } else {
+            progressRate = 0.1; breathingCue = 'EXHALE';
+            const timeInPhase = cycleProgress - (inhaleDuration + holdDuration);
+            fadeOpacity = calculateFadeOpacity(timeInPhase, exhaleDuration);
+          }
+          break;
+        }
+        case 'Breathe (Box)': {
+            const cycleDuration = 16000;
+            const phaseDuration = 4000;
+            const H_AMOUNT = 15; // Amplitude of primes for breathing
+            const DRIFT_PER_CYCLE = 5; // Slow outward drift
+
+            const elapsedTime = timestamp - animationStateRef.current.cycleStartTimestamp;
+            
+            // A continuous, slow drift to prevent the animation from being static and to avoid jumps.
+            const continuousHighlightProgress = (elapsedTime / cycleDuration) * DRIFT_PER_CYCLE;
+            
+            const cycleProgress = elapsedTime % cycleDuration;
+            const timeInPhase = cycleProgress % phaseDuration;
+            fadeOpacity = calculateFadeOpacity(timeInPhase, phaseDuration);
+            
+            let oscillatingHighlightProgress = 0;
+            
+            if (cycleProgress < phaseDuration) { // Inhale
+                const phaseProgress = timeInPhase / phaseDuration;
+                oscillatingHighlightProgress = localEaseInOutSine(phaseProgress) * H_AMOUNT;
+                breathingCue = 'INHALE';
+            } else if (cycleProgress < phaseDuration * 2) { // Hold In
+                oscillatingHighlightProgress = H_AMOUNT;
+                breathingCue = 'HOLD';
+            } else if (cycleProgress < phaseDuration * 3) { // Exhale
+                const phaseProgress = timeInPhase / phaseDuration;
+                oscillatingHighlightProgress = (1 - localEaseInOutSine(phaseProgress)) * H_AMOUNT;
+                breathingCue = 'EXHALE';
+            } else { // Hold Out
+                oscillatingHighlightProgress = 0;
+                breathingCue = 'HOLD'; 
+            }
+            
+            highlightProgressRef.current = continuousHighlightProgress + oscillatingHighlightProgress;
+            progressRate = 0; // Prevent standard rate logic from running for this style
+            break;
+        }
+        case 'Breathing Journey': {
+            const period = 10000;
+            const phaseDuration = period / 2;
+            const cycleTime = (timestamp - animationStateRef.current.cycleStartTimestamp) % period;
+            const cycleNumber = Math.floor((timestamp - animationStateRef.current.cycleStartTimestamp) / period);
+            const isInhale = cycleTime < phaseDuration;
+            const timeInPhase = cycleTime % phaseDuration;
+            const phaseProgress = timeInPhase / phaseDuration;
+            
+            const targetPrimeIndex = cycleNumber + 1;
+            if (targetPrimeIndex > highlightProgressRef.current) {
+                highlightProgressRef.current += 0.2; // Animate towards next prime
+            }
+             if (highlightProgressRef.current > targetPrimeIndex) {
+                highlightProgressRef.current = targetPrimeIndex;
+            }
+
+            if (targetPrimeIndex < primes.length) {
+                newestPrimeValue = primes[targetPrimeIndex]?.number;
+            }
+
+            breathingCue = isInhale ? 'Breathe In...' : 'Breathe Out...';
+            fadeOpacity = calculateFadeOpacity(timeInPhase, phaseDuration);
+            if (isInhale) fadeInProgress = localEaseInOutSine(phaseProgress);
+            break;
+        }
+        case 'Sound Activated':
+          if (analyserRef.current) {
+            const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+            analyserRef.current.getByteFrequencyData(dataArray);
+            const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+            progressRate = (avg / 128) * 0.8;
+          }
+          break;
+      }
+      
+      if (animationStyle !== 'Breathing Journey' && animationStyle !== 'Breathe (Box)') {
+        if (animationDirectionRef.current === 'forward') {
+            highlightProgressRef.current += progressRate;
+            if (highlightProgressRef.current > primes.length) {
+            highlightProgressRef.current = primes.length;
+            animationDirectionRef.current = 'backward';
+            }
+        } else {
+            highlightProgressRef.current -= progressRate;
+            if (highlightProgressRef.current < 0) {
+            highlightProgressRef.current = 0;
+            animationDirectionRef.current = 'forward';
+            }
+        }
+      }
+
+
+      const dpr = window.devicePixelRatio || 1;
+      const rect = parentRef.current.getBoundingClientRect();
+      if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+      }
+      
+      ctx.save();
+      ctx.fillStyle = '#111827';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(dpr, dpr);
+      
+      ctx.translate(viewState.x, viewState.y);
+      ctx.scale(viewState.zoom, viewState.zoom);
+      
+      const viewPortLeft = -viewState.x / viewState.zoom;
+      const viewPortTop = -viewState.y / viewState.zoom;
+      const viewPortRight = (rect.width - viewState.x) / viewState.zoom;
+      const viewPortBottom = (rect.height - viewState.y) / viewState.zoom;
+
+      const minGridX = Math.floor(viewPortLeft / pointSpacing) - 1;
+      const maxGridX = Math.ceil(viewPortRight / pointSpacing) + 1;
+      const minGridY = Math.floor(viewPortTop / pointSpacing) - 1;
+      const maxGridY = Math.ceil(viewPortBottom / pointSpacing) + 1;
+
+      const useRects = viewState.zoom < 0.15;
+      const rectSize = 1 / viewState.zoom;
+
+      for (let gridY = minGridY; gridY <= maxGridY; gridY++) {
+        for (let gridX = minGridX; gridX <= maxGridX; gridX++) {
+            const point = pointMap.get(`${gridX}|${gridY}`);
+            if (!point || point.number > count) continue;
+            
+            let color = nonPrimeColor;
+            if(point.isPrime) {
+                const primeIndex = primeNumberToIndex.get(point.number);
+                if (primeIndex !== undefined && primeIndex < highlightProgressRef.current) {
+                    color = primeColor;
+                }
+            }
+            ctx.fillStyle = color;
+
+            if (useRects) {
+              ctx.fillRect(point.x * pointSpacing - rectSize / 2, point.y * pointSpacing - rectSize / 2, rectSize, rectSize);
+            } else {
+              ctx.beginPath();
+              const radius = point.isPrime ? primeRadius : nonPrimeRadius;
+              ctx.arc(point.x * pointSpacing, point.y * pointSpacing, radius, 0, 2 * Math.PI);
+              ctx.fill();
+            }
+        }
+      }
+      
+      const tailLength = 15;
+      const currentIndex = Math.floor(highlightProgressRef.current);
+      for (let i = 0; i < tailLength; i++) {
+        const primeIndex = animationDirectionRef.current === 'forward' || animationStyle === 'Breathing Journey' ? currentIndex - i : currentIndex + i;
+        if (primeIndex < 0 || primeIndex >= primes.length) continue;
+        const point = primes[primeIndex];
+        if (point.number > count) continue;
+
+        const opacity = Math.max(0, 1 - (i / tailLength));
+        const radius = primeRadius * (2.5 - (i / tailLength) * 1.5);
+        
+        const colorIndex = isHarmonic ? Math.sqrt(point.number) * 4 : primeIndex;
+        const getHue = colorPalettes[colorTheme];
+        const rawHue = getHue(colorIndex, timeRef.current / 20);
+        const hue = rawHue < 0 ? (rawHue % 360) + 360 : rawHue % 360;
+
+        ctx.fillStyle = `hsla(${hue}, 100%, 70%, ${opacity})`;
+        ctx.shadowColor = `hsla(${hue}, 100%, 70%, 1)`;
+        ctx.shadowBlur = (1 - (i / tailLength)) * 15 / viewState.zoom;
+        
+        ctx.beginPath();
+        ctx.arc(point.x * pointSpacing, point.y * pointSpacing, radius, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      ctx.shadowBlur = 0;
+      ctx.restore();
+
+      applyShader(ctx, shader, timestamp);
+
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      const textX = (canvas.width / dpr) / 2;
+      const textY = 50;
+
+      if (showBreathingText && breathingCue) {
+        ctx.font = 'bold 15px "Courier New", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        const glowColor = colorPalettes[colorTheme](currentIndex, timeRef.current/20);
+        ctx.shadowColor = `hsla(${glowColor}, 100%, 70%, ${0.5 * fadeOpacity})`;
+        
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = `hsla(${glowColor}, 100%, 70%, ${0.1 * fadeOpacity})`;
+        ctx.fillText(breathingCue, textX, textY);
+  
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = `hsla(${glowColor}, 100%, 70%, ${0.25 * fadeOpacity})`;
+        ctx.fillText(breathingCue, textX, textY);
+        
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = `rgba(255, 255, 255, ${0.8 * fadeOpacity})`;
+        ctx.fillText(breathingCue, textX, textY);
+      }
+        if (showJourneyPrime && animationStyle === 'Breathing Journey' && newestPrimeValue > -1) {
+            ctx.font = '12px "Courier New", monospace';
+            ctx.fillStyle = `rgba(255, 215, 0, ${0.5 * fadeInProgress * fadeOpacity})`;
+            ctx.textAlign = 'center';
+            ctx.shadowBlur = 5;
+            ctx.shadowColor = 'rgba(255, 215, 0, 0.5)';
+            ctx.fillText(`+ ${newestPrimeValue}`, textX, textY + 25);
+        }
+      ctx.restore();
+
+      animationFrameId.current = requestAnimationFrame(draw);
+    };
+
+    animationFrameId.current = requestAnimationFrame(draw);
+    return () => { 
+        animationRunning = false;
+        if(animationFrameId.current) cancelAnimationFrame(animationFrameId.current)
+    }
+  }, [count, pointMap, viewState, primes, animationStyle, colorTheme, shader, primeNumberToIndex, showBreathingText, showJourneyPrime, isHarmonic]);
+
+  return (
+    <div
+      ref={parentRef}
+      className="w-full h-full relative cursor-grab touch-none select-none overflow-hidden"
+    >
+      <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full" />
+    </div>
+  );
+};
+
+
+// Inlined from components/PrimeWave.tsx
+const thetaSamples = 500;
+const R_base = 50;
+const radial_growth_per_prime = 3;
+const amplitude0 = 5;
+const alpha_ring = 0.4;
+
+const primeWaveColorPalettes = {
+  Spectrum: (i, offset) => -i * 10 + offset,
+  Ocean: (i, offset) => 200 + Math.sin((i + offset * 0.1) * 0.1) * 40,
+  Sunset: (i, offset) => 30 + Math.sin((i + offset * 0.1) * 0.08) * 30,
+  Forest: (i, offset) => 120 + Math.sin((i + offset * 0.1) * 0.1) * 30,
+  Earth: (i, offset) => 80 + Math.sin((i + offset * 0.05) * 0.1) * 20, 
+  Autumn: (i, offset) => 30 + Math.sin((i + offset * 0.1) * 0.08) * 30, 
+  Cyberpunk: (i, offset) => 300 + Math.sin((i + offset * 0.1) * 0.06) * 60,
+  Vaporwave: (i, offset) => 270 + Math.sin((i + offset * 0.1) * 0.1) * 40,
+};
+
+const easeInOutSine = (x) => -(Math.cos(Math.PI * x) - 1) / 2;
+
+const PrimeWave = ({ maxCount, colorTheme, animationStyle, shader, showBreathingText, showJourneyPrime, isHarmonic }) => {
+  const canvasRef = useRef(null);
+  const parentRef = useRef(null);
+  const [viewState, setViewState] = useState({ x: 0, y: 0, zoom: 1.0 });
+  const animationFrameId = useRef();
+  const colorOffsetRef = useRef(0);
+  const timeRef = useRef(0);
+  const animationStateRef = useRef({ cycleStartTimestamp: 0 });
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const audioStreamRef = useRef(null);
+  const animatedCountRef = useRef(100);
+
+  useUnifiedInteraction(canvasRef, viewState, setViewState);
+
+  const { rings, primes } = useMemo(() => {
+    const primeSieve = getPrimeSieve(maxCount);
+    const primeList = [];
+    for (let i = 2; i <= maxCount; i++) {
+      if (primeSieve[i]) {
+        primeList.push(i);
+      }
+    }
+    const calculatedRings = new Map();
+    const theta = Array.from({ length: thetaSamples }, (_, i) => (i / (thetaSamples - 1)) * 2 * Math.PI);
+    primeList.forEach((p, i) => {
+      const points = [];
+      const R_i = R_base + radial_growth_per_prime * i;
+      for (let j = 0; j < thetaSamples; j++) {
+        const angle = theta[j];
+        const r = R_i + amplitude0 * Math.sin(p * angle);
+        const x = r * Math.cos(angle);
+        const y = r * Math.sin(angle);
+        points.push({ x, y });
+      }
+      calculatedRings.set(p, points);
+    });
+    return { rings: calculatedRings, primes: primeList };
+  }, [maxCount]);
+
+  const resetViewState = useCallback(() => {
+    if (parentRef.current && primes.length > 0) {
+        const { width, height } = parentRef.current.getBoundingClientRect();
+        const lastPrimeIndex = primes.findIndex(p => p > maxCount);
+        const relevantPrimes = lastPrimeIndex === -1 ? primes.length : lastPrimeIndex;
+        const maxRadius = R_base + radial_growth_per_prime * relevantPrimes + amplitude0;
+        const requiredDiameter = maxRadius * 2;
+        const newZoom = Math.min(width / requiredDiameter, height / requiredDiameter) * 3.0;
+        setViewState({ x: width / 2, y: height / 2, zoom: newZoom });
+    } else if (parentRef.current) {
+        const { width, height } = parentRef.current.getBoundingClientRect();
+        setViewState({ x: width / 2, y: height / 2, zoom: 1.0 });
+    }
+  }, [maxCount, primes]);
+  
+  useEffect(() => {
+      resetViewState();
+  }, [maxCount, resetViewState]);
+  
+  useEffect(() => {
+    animationStateRef.current.cycleStartTimestamp = timeRef.current;
+    if (animationStyle === 'Breathing Journey' && primes.length > 1) {
+      animatedCountRef.current = primes[1];
+    } else {
+      animatedCountRef.current = 100;
+    }
+  }, [animationStyle, primes]);
+
+  useEffect(() => {
+    const setupAudio = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioStreamRef.current = stream;
+        const context = new (window.AudioContext || window.webkitAudioContext)();
+        audioContextRef.current = context;
+        const source = context.createMediaStreamSource(stream);
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 32;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+      } catch (err) {
+        console.error('Microphone access denied:', err);
+      }
+    };
+    const cleanupAudio = () => {
+      audioStreamRef.current?.getTracks().forEach(track => track.stop());
+      audioStreamRef.current = null;
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close();
+      }
+      audioContextRef.current = null;
+      analyserRef.current = null;
+    };
+    if (animationStyle === 'Sound Activated') {
+      setupAudio();
+    }
+    return () => {
+      cleanupAudio();
+    };
+  }, [animationStyle]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    let animationRunning = true;
+
+    const draw = (timestamp) => {
+      if (!animationRunning) return;
+      timeRef.current = timestamp;
+      if (animationStateRef.current.cycleStartTimestamp === 0) {
+        animationStateRef.current.cycleStartTimestamp = timestamp;
+      }
+      let animationZoomFactor = 1.0;
+      let breathingCue = '';
+      let fadeOpacity = 1.0;
+      let newestPrimeValue = -1;
+      let fadeInProgress = 1.0;
+      let speed = 1.0;
+
+      switch (animationStyle) {
+        case 'Slow':
+          speed = 0.5;
+          break;
+        case 'Pulse':
+          speed = 1 + Math.sin(timeRef.current / 500) * 0.8;
+          break;
+        case 'Breathing Journey':
+        case 'Breathe (Resonant)':
+          {
+            const period = 10000;
+            const phaseDuration = period / 2;
+            const SHIFT_PER_PHASE = 150;
+            const cycleTime = (timestamp - animationStateRef.current.cycleStartTimestamp) % period;
+            const cycleNumber = Math.floor((timestamp - animationStateRef.current.cycleStartTimestamp) / period);
+            const baseOffset = cycleNumber * SHIFT_PER_PHASE * 2;
+            let currentOffset = baseOffset;
+            const isInhale = cycleTime < phaseDuration;
+            const timeInPhase = cycleTime % phaseDuration;
+            const phaseProgress = timeInPhase / phaseDuration;
+            if (isInhale) {
+              currentOffset += easeInOutSine(phaseProgress) * SHIFT_PER_PHASE;
+            } else {
+              currentOffset += SHIFT_PER_PHASE;
+              currentOffset += easeInOutSine(phaseProgress) * SHIFT_PER_PHASE;
+            }
+            colorOffsetRef.current = currentOffset;
+            const phase = (timestamp * 2 * Math.PI) / period;
+            animationZoomFactor = 1.0 + 0.03 * (1 - Math.cos(phase));
+            breathingCue = isInhale ? 'Breathe In...' : 'Breathe Out...';
+            fadeOpacity = calculateFadeOpacity(timeInPhase, phaseDuration);
+            if (animationStyle === 'Breathing Journey') {
+              const currentCycleNumber = Math.floor((timestamp - animationStateRef.current.cycleStartTimestamp) / period);
+              const basePrimeCount = 2;
+              const primeIndex = basePrimeCount + currentCycleNumber - 1;
+              if (primeIndex < primes.length) {
+                animatedCountRef.current = primes[primeIndex];
+                newestPrimeValue = primes[primeIndex];
+              } else {
+                animatedCountRef.current = maxCount;
+              }
+              if(isInhale) {
+                fadeInProgress = easeInOutSine(phaseProgress);
+              }
+            }
+          }
+          break;
+        case 'Breathe (4-7-8)':
+          {
+            const cycleDuration = 19000;
+            const SHIFT_AMOUNT = 150;
+            const cycleProgress = (timestamp - animationStateRef.current.cycleStartTimestamp) % cycleDuration;
+            const cycleNumber = Math.floor((timestamp - animationStateRef.current.cycleStartTimestamp) / cycleDuration);
+            const baseOffset = cycleNumber * SHIFT_AMOUNT * 0.1;
+            const inhaleDuration = 4000;
+            const holdDuration = 7000;
+            const exhaleDuration = 8000;
+            if (cycleProgress < inhaleDuration) {
+              const phaseProgress = cycleProgress / inhaleDuration;
+              colorOffsetRef.current = baseOffset + easeInOutSine(phaseProgress) * SHIFT_AMOUNT;
+              animationZoomFactor = 1.0 + 0.05 * Math.sin(phaseProgress * (Math.PI / 2));
+              breathingCue = 'Breathe In...';
+              fadeOpacity = calculateFadeOpacity(cycleProgress, inhaleDuration);
+            } else if (cycleProgress < inhaleDuration + holdDuration) {
+              colorOffsetRef.current = baseOffset + SHIFT_AMOUNT;
+              animationZoomFactor = 1.05;
+              breathingCue = 'Hold';
+              const timeInPhase = cycleProgress - inhaleDuration;
+              fadeOpacity = calculateFadeOpacity(timeInPhase, holdDuration);
+            } else {
+              const phaseProgress = (cycleProgress - (inhaleDuration + holdDuration)) / exhaleDuration;
+              colorOffsetRef.current = baseOffset + SHIFT_AMOUNT - easeInOutSine(phaseProgress) * SHIFT_AMOUNT;
+              animationZoomFactor = 1.0 + 0.05 * Math.cos(phaseProgress * (Math.PI / 2));
+              breathingCue = 'Breathe Out...';
+              const timeInPhase = cycleProgress - (inhaleDuration + holdDuration);
+              fadeOpacity = calculateFadeOpacity(timeInPhase, exhaleDuration);
+            }
+          }
+          break;
+        case 'Breathe (Box)':
+          {
+              const cycleDuration = 16000;
+              const SHIFT_AMOUNT = 150;
+              const elapsedTime = timestamp - animationStateRef.current.cycleStartTimestamp;
+              
+              // Continuous drift to prevent jump at loop boundary.
+              const driftRate = (SHIFT_AMOUNT * 0.1) / cycleDuration;
+              const continuousOffset = elapsedTime * driftRate;
+
+              const phaseDuration = 4000;
+              const cycleProgress = elapsedTime % cycleDuration;
+              const timeInPhase = cycleProgress % phaseDuration;
+              fadeOpacity = calculateFadeOpacity(timeInPhase, phaseDuration);
+              
+              let zoomProgress = 0;
+              let oscillatingOffset = 0;
+
+              if (cycleProgress < phaseDuration) { // Inhale
+                  const phaseProgress = timeInPhase / phaseDuration;
+                  oscillatingOffset = easeInOutSine(phaseProgress) * SHIFT_AMOUNT;
+                  zoomProgress = easeInOutSine(phaseProgress);
+                  breathingCue = 'Breathe In...';
+              } else if (cycleProgress < phaseDuration * 2) { // Hold In
+                  oscillatingOffset = SHIFT_AMOUNT;
+                  zoomProgress = 1.0;
+                  breathingCue = 'Hold';
+              } else if (cycleProgress < phaseDuration * 3) { // Exhale
+                  const phaseProgress = timeInPhase / phaseDuration;
+                  oscillatingOffset = SHIFT_AMOUNT * (1 - easeInOutSine(phaseProgress));
+                  zoomProgress = 1 - easeInOutSine(phaseProgress);
+                  breathingCue = 'Breathe Out...';
+              } else { // Hold Out
+                  oscillatingOffset = 0;
+                  zoomProgress = 0;
+                  breathingCue = 'Hold';
+              }
+
+              colorOffsetRef.current = continuousOffset + oscillatingOffset;
+              animationZoomFactor = 1.0 + 0.05 * zoomProgress;
+          }
+          break;
+        case 'Sound Activated':
+          if (analyserRef.current) {
+            const bufferLength = analyserRef.current.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyserRef.current.getByteFrequencyData(dataArray);
+            const sum = dataArray.reduce((a, b) => a + b, 0);
+            const avg = sum / bufferLength || 0;
+            const normalizedAvg = avg / 128; 
+            speed = normalizedAvg * 5;
+          }
+          break;
+      }
+      
+      if (animationStyle !== 'Breathing Journey' && animationStyle !== 'Breathe (Box)') {
+          colorOffsetRef.current += speed;
+      }
+
+
+      const dpr = window.devicePixelRatio || 1;
+      const rect = parentRef.current.getBoundingClientRect();
+      if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+      }
+
+      ctx.save();
+      ctx.fillStyle = '#111827';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(dpr, dpr);
+
+      ctx.translate(viewState.x, viewState.y);
+      ctx.scale(viewState.zoom * animationZoomFactor, viewState.zoom * animationZoomFactor);
+      ctx.lineWidth = 1 / (viewState.zoom * animationZoomFactor);
+      const currentAnimatedCount = animationStyle === 'Breathing Journey' ? animatedCountRef.current : maxCount;
+      let i = 0;
+      rings.forEach((points, prime) => {
+        if (prime > currentAnimatedCount || points.length === 0) return;
+        
+        const colorIndex = isHarmonic ? Math.sqrt(prime) * 4 : i;
+        const getHue = primeWaveColorPalettes[colorTheme];
+        const rawHue = getHue(colorIndex, colorOffsetRef.current);
+        const hue = rawHue < 0 ? (rawHue % 360) + 360 : rawHue % 360;
+        let finalAlpha = alpha_ring;
+        if (animationStyle === 'Breathing Journey' && prime === newestPrimeValue && newestPrimeValue > primes[1]) {
+          finalAlpha = alpha_ring * fadeInProgress;
+        }
+        ctx.strokeStyle = `hsla(${hue}, 100%, 70%, ${finalAlpha})`;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let k = 1; k < points.length; k++) {
+          ctx.lineTo(points[k].x, points[k].y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        i++;
+      });
+      ctx.restore();
+
+      applyShader(ctx, shader, timestamp);
+      
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      const centerX = (canvas.width / dpr) / 2;
+      const centerY = (canvas.height / dpr) / 2;
+      if (showBreathingText && breathingCue) {
+        ctx.font = '10px "Helvetica Neue", sans-serif';
+        ctx.fillStyle = `rgba(255, 255, 255, ${0.4 * fadeOpacity})`;
+        ctx.textAlign = 'center';
+        ctx.shadowBlur = 0;
+        ctx.fillText(breathingCue, centerX, centerY);
+      }
+      if (showJourneyPrime && animationStyle === 'Breathing Journey' && newestPrimeValue > -1) {
+          ctx.font = '12px "Helvetica Neue", sans-serif';
+          ctx.fillStyle = `rgba(255, 215, 0, ${0.5 * fadeInProgress * fadeOpacity})`;
+          ctx.textAlign = 'center';
+          ctx.fillText(`+ ${newestPrimeValue}`, centerX, centerY + 20);
+      }
+      ctx.restore();
+      animationFrameId.current = requestAnimationFrame(draw);
+    };
+    animationFrameId.current = requestAnimationFrame(draw);
+    return () => {
+      animationRunning = false;
+      if (animationFrameId.current) {
+        cancelAnimationFrame(animationFrameId.current);
+      }
+    };
+  }, [rings, primes, viewState, colorTheme, animationStyle, shader, maxCount, showBreathingText, showJourneyPrime, isHarmonic]);
+
+  return (
+    <div
+      ref={parentRef}
+      className="w-full h-full relative cursor-grab touch-none select-none overflow-hidden"
+    >
+      <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full" />
+    </div>
+  );
+};
+
+
+// Inlined from components/PrimeWaveField.tsx
+const verticalSpacingScale = 3;
+const amplitude = 15;
+const waveFrequencyScale = 0.01;
+const alpha_wave = 0.6;
+const primeWaveFieldColorPalettes = {
+  Spectrum: (i, offset) => -i * 10 + offset,
+  Ocean: (i, offset) => 200 + Math.sin((i + offset * 0.1) * 0.1) * 40,
+  Sunset: (i, offset) => 30 + Math.sin((i + offset * 0.1) * 0.08) * 30,
+  Forest: (i, offset) => 120 + Math.sin((i + offset * 0.1) * 0.1) * 30,
+  Earth: (i, offset) => 80 + Math.sin((i + offset * 0.05) * 0.1) * 20,
+  Autumn: (i, offset) => 30 + Math.sin((i + offset * 0.1) * 0.08) * 30,
+  Cyberpunk: (i, offset) => 300 + Math.sin((i + offset * 0.1) * 0.06) * 60,
+  Vaporwave: (i, offset) => 270 + Math.sin((i + offset * 0.1) * 0.1) * 40,
+};
+
+const PrimeWaveField = ({ maxCount, colorTheme, animationStyle, shader, showBreathingText, showJourneyPrime, isHarmonic }) => {
+  const canvasRef = useRef(null);
+  const parentRef = useRef(null);
+  const [viewState, setViewState] = useState({ x: 0, y: 0, zoom: 0.2 });
+  const animationFrameId = useRef();
+  const timeRef = useRef(0);
+  const animationStateRef = useRef({ cycleStartTimestamp: 0 });
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const audioStreamRef = useRef(null);
+  const phaseOffsetRef = useRef(0);
+  const colorOffsetRef = useRef(0);
+  const animatedPrimeCountRef = useRef(1);
+
+  useUnifiedInteraction(canvasRef, viewState, setViewState);
+  
+  const primes = useMemo(() => {
+    const primeSieve = getPrimeSieve(maxCount);
+    const primeList = [];
+    for (let i = 2; i <= maxCount; i++) {
+      if (primeSieve[i]) primeList.push(i);
+    }
+    return primeList;
+  }, [maxCount]);
+
+  const resetViewState = useCallback(() => {
+    if (parentRef.current && primes.length > 1) {
+        const { width, height } = parentRef.current.getBoundingClientRect();
+        const yRange = (primes[primes.length - 1] - primes[0]) * verticalSpacingScale;
+        const newZoom = Math.min(height / (yRange + amplitude * 2), 0.2);
+        setViewState({ x: width / 2, y: height / 2, zoom: newZoom });
+    } else if (parentRef.current) {
+        const { width, height } = parentRef.current.getBoundingClientRect();
+        setViewState({ x: width / 2, y: height / 2, zoom: 0.2 });
+    }
+  }, [primes]);
+  
+  useEffect(() => {
+      resetViewState();
+  }, [primes, resetViewState]);
+  
+  useEffect(() => {
+    animationStateRef.current.cycleStartTimestamp = timeRef.current;
+    if (animationStyle === 'Breathing Journey') {
+      animatedPrimeCountRef.current = 1;
+    } else {
+      animatedPrimeCountRef.current = primes.length;
+    }
+  }, [animationStyle, primes]);
+
+  useEffect(() => {
+    const setupAudio = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioStreamRef.current = stream;
+        const context = new (window.AudioContext || window.webkitAudioContext)();
+        audioContextRef.current = context;
+        const source = context.createMediaStreamSource(stream);
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 32;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+      } catch (err) {
+        console.error('Microphone access denied:', err);
+      }
+    };
+    const cleanupAudio = () => {
+      audioStreamRef.current?.getTracks().forEach(track => track.stop());
+      audioStreamRef.current = null;
+      audioContextRef.current?.close();
+      audioContextRef.current = null;
+      analyserRef.current = null;
+    };
+    if (animationStyle === 'Sound Activated') setupAudio();
+    return cleanupAudio;
+  }, [animationStyle]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    let animationRunning = true;
+
+    const draw = (timestamp) => {
+      if (!animationRunning) return;
+      timeRef.current = timestamp;
+      if (animationStateRef.current.cycleStartTimestamp === 0) {
+        animationStateRef.current.cycleStartTimestamp = timestamp;
+      }
+      let breathingCue = '';
+      let fadeOpacity = 1.0;
+      let fadeInProgress = 1.0;
+      let newestPrimeValue = -1;
+      let phaseSpeed = 0;
+      let colorSpeed = 0;
+      
+      switch (animationStyle) {
+        case 'Slow':
+          phaseSpeed = 0.02;
+          colorSpeed = 0.5;
+          break;
+        case 'Pulse':
+          {
+            const speed = 1 + Math.sin(timeRef.current / 500) * 0.8;
+            phaseSpeed = speed * 0.05;
+            colorSpeed = speed;
+          }
+          break;
+        case 'Breathing Journey':
+        case 'Breathe (Resonant)':
+          {
+            const period = 10000;
+            const phaseDuration = period / 2;
+            const MAX_PHASE_SHIFT = Math.PI;
+            const SHIFT_PER_PHASE = 150;
+            const cycleTime = (timestamp - animationStateRef.current.cycleStartTimestamp) % period;
+            const cycleNumber = Math.floor((timestamp - animationStateRef.current.cycleStartTimestamp) / period);
+            const baseOffset = cycleNumber * SHIFT_PER_PHASE * 2;
+            const isInhale = cycleTime < phaseDuration;
+            const timeInPhase = cycleTime % phaseDuration;
+            const phaseProgress = timeInPhase / phaseDuration;
+            if (isInhale) {
+              phaseOffsetRef.current = easeInOutSine(phaseProgress) * MAX_PHASE_SHIFT;
+              colorOffsetRef.current = baseOffset + easeInOutSine(phaseProgress) * SHIFT_PER_PHASE;
+            } else {
+              phaseOffsetRef.current = (1 - easeInOutSine(phaseProgress)) * MAX_PHASE_SHIFT;
+              colorOffsetRef.current = baseOffset + SHIFT_PER_PHASE + easeInOutSine(phaseProgress) * SHIFT_PER_PHASE;
+            }
+            breathingCue = isInhale ? 'Breathe In...' : 'Breathe Out...';
+            fadeOpacity = calculateFadeOpacity(timeInPhase, phaseDuration);
+            if (animationStyle === 'Breathing Journey') {
+              animatedPrimeCountRef.current = Math.min(primes.length, 1 + cycleNumber);
+              if (animatedPrimeCountRef.current > 0) {
+                  newestPrimeValue = primes[animatedPrimeCountRef.current - 1];
+              }
+              if (isInhale) fadeInProgress = easeInOutSine(phaseProgress);
+            }
+          }
+          break;
+         case 'Breathe (4-7-8)':
+          {
+            const cycleDuration = 19000;
+            const inhaleDuration = 4000, holdDuration = 7000, exhaleDuration = 8000;
+            const cycleProgress = (timestamp - animationStateRef.current.cycleStartTimestamp) % cycleDuration;
+            const MAX_PHASE_SHIFT = Math.PI;
+            if (cycleProgress < inhaleDuration) {
+              phaseOffsetRef.current = easeInOutSine(cycleProgress / inhaleDuration) * MAX_PHASE_SHIFT;
+              breathingCue = 'Breathe In...';
+              fadeOpacity = calculateFadeOpacity(cycleProgress, inhaleDuration);
+            } else if (cycleProgress < inhaleDuration + holdDuration) {
+              phaseOffsetRef.current = MAX_PHASE_SHIFT;
+              breathingCue = 'Hold';
+              const timeInPhase = cycleProgress - inhaleDuration;
+              fadeOpacity = calculateFadeOpacity(timeInPhase, holdDuration);
+            } else {
+              phaseOffsetRef.current = (1 - easeInOutSine((cycleProgress - (inhaleDuration + holdDuration)) / exhaleDuration)) * MAX_PHASE_SHIFT;
+              breathingCue = 'Breathe Out...';
+              const timeInPhase = cycleProgress - (inhaleDuration + holdDuration);
+              fadeOpacity = calculateFadeOpacity(timeInPhase, exhaleDuration);
+            }
+          }
+          break;
+        case 'Breathe (Box)':
+          {
+            const cycleDuration = 16000, phaseDuration = 4000;
+            const cycleProgress = (timestamp - animationStateRef.current.cycleStartTimestamp) % cycleDuration;
+            const MAX_PHASE_SHIFT = Math.PI;
+            const timeInPhase = cycleProgress % phaseDuration;
+            fadeOpacity = calculateFadeOpacity(timeInPhase, phaseDuration);
+            if (cycleProgress < phaseDuration) {
+              phaseOffsetRef.current = easeInOutSine(cycleProgress / phaseDuration) * MAX_PHASE_SHIFT;
+              breathingCue = 'Breathe In...';
+            } else if (cycleProgress < phaseDuration * 2) {
+              phaseOffsetRef.current = MAX_PHASE_SHIFT;
+              breathingCue = 'Hold';
+            } else if (cycleProgress < phaseDuration * 3) {
+              phaseOffsetRef.current = (1 - easeInOutSine((cycleProgress - phaseDuration * 2) / phaseDuration)) * MAX_PHASE_SHIFT;
+              breathingCue = 'Breathe Out...';
+            } else {
+              phaseOffsetRef.current = 0;
+              breathingCue = 'Hold';
+            }
+          }
+          break;
+        case 'Sound Activated':
+          if (analyserRef.current) {
+            const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+            analyserRef.current.getByteFrequencyData(dataArray);
+            const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+            phaseSpeed = (avg / 128) * 0.1;
+            colorSpeed = (avg / 128) * 2;
+          }
+          break;
+      }
+      
+      if (animationStyle !== 'Breathing Journey') {
+        phaseOffsetRef.current += phaseSpeed;
+        colorOffsetRef.current += colorSpeed;
+      }
+      
+      const dpr = window.devicePixelRatio || 1;
+      const rect = parentRef.current.getBoundingClientRect();
+      if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+      }
+
+      ctx.save();
+      ctx.fillStyle = '#111827';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(dpr, dpr);
+      
+      ctx.translate(viewState.x, viewState.y);
+      ctx.scale(viewState.zoom, viewState.zoom);
+      ctx.lineWidth = 1.5 / viewState.zoom;
+      
+      const viewPortLeft = -viewState.x / viewState.zoom;
+      const viewPortRight = (rect.width - viewState.x) / viewState.zoom;
+      const samples = Math.floor(viewPortRight - viewPortLeft);
+      const step = (viewPortRight - viewPortLeft) / samples;
+      
+      const primeCountToRender = animationStyle === 'Breathing Journey' ? animatedPrimeCountRef.current : primes.length;
+      if (primeCountToRender === 0) {
+        ctx.restore();
+        animationFrameId.current = requestAnimationFrame(draw);
+        return;
+      }
+      
+      const newestPrimeIndex = primeCountToRender - 1;
+      
+      const visiblePrimes = primes.slice(0, primeCountToRender);
+      if (visiblePrimes.length === 0) {
+          ctx.restore();
+          animationFrameId.current = requestAnimationFrame(draw);
+          return;
+      }
+      
+      const centerPrimeValue = visiblePrimes[Math.floor(visiblePrimes.length / 2)];
+
+      for (let i = 0; i < primeCountToRender; i++) {
+        const p = primes[i];
+        const y_base = (p - centerPrimeValue) * verticalSpacingScale;
+
+        const colorIndex = isHarmonic ? Math.sqrt(p) * 4 : i;
+        const getHue = primeWaveFieldColorPalettes[colorTheme];
+        const rawHue = getHue(colorIndex, colorOffsetRef.current);
+        const hue = rawHue < 0 ? (rawHue % 360) + 360 : rawHue % 360;
+        let finalAlpha = alpha_wave;
+        if(animationStyle === 'Breathing Journey' && i === newestPrimeIndex && i > 0) {
+            finalAlpha = alpha_wave * fadeInProgress;
+        }
+        ctx.strokeStyle = `hsla(${hue}, 100%, 70%, ${finalAlpha})`;
+        ctx.beginPath();
+        let firstPoint = true;
+        for (let s = 0; s <= samples; s++) {
+          const x = viewPortLeft + s * step;
+          const y = y_base + amplitude * Math.sin(p * waveFrequencyScale * x + phaseOffsetRef.current);
+          if (firstPoint) {
+            ctx.moveTo(x, y);
+            firstPoint = false;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      applyShader(ctx, shader, timestamp);
+
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      const textX = rect.width / 2;
+      const textY = 50;
+      if (showBreathingText && breathingCue) {
+        ctx.font = 'bold 15px "Courier New", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const glowColor = primeWaveFieldColorPalettes[colorTheme](primes.length / 2, colorOffsetRef.current);
+        ctx.shadowColor = `hsla(${glowColor}, 100%, 70%, ${0.5 * fadeOpacity})`;
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = `hsla(${glowColor}, 100%, 70%, ${0.1 * fadeOpacity})`;
+        ctx.fillText(breathingCue, textX, textY);
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = `hsla(${glowColor}, 100%, 70%, ${0.25 * fadeOpacity})`;
+        ctx.fillText(breathingCue, textX, textY);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = `rgba(255, 255, 255, ${0.8 * fadeOpacity})`;
+        ctx.fillText(breathingCue, textX, textY);
+      }
+      if (showJourneyPrime && animationStyle === 'Breathing Journey' && newestPrimeValue > -1) {
+          ctx.font = '12px "Courier New", monospace';
+          ctx.fillStyle = `rgba(255, 215, 0, ${0.5 * fadeInProgress * fadeOpacity})`;
+          ctx.textAlign = 'center';
+          ctx.shadowBlur = 5;
+          ctx.shadowColor = 'rgba(255, 215, 0, 0.5)';
+          ctx.fillText(`+ ${newestPrimeValue}`, textX, textY + 25);
+      }
+      ctx.restore();
+      animationFrameId.current = requestAnimationFrame(draw);
+    };
+
+    animationFrameId.current = requestAnimationFrame(draw);
+    return () => {
+      animationRunning = false;
+      if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+    };
+  }, [primes, viewState, colorTheme, animationStyle, shader, showBreathingText, showJourneyPrime, isHarmonic]);
+
+
+  return (
+    <div
+      ref={parentRef}
+      className="w-full h-full relative cursor-grab touch-none select-none overflow-hidden"
+    >
+      <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full" />
+    </div>
+  );
+};
+
+// --- START INSTALL PROMPT ---
+const InstallPrompt = ({ onClose }) => {
+    const [os, setOs] = useState(null);
+
+    useEffect(() => {
+        const userAgent = window.navigator.userAgent;
+        if (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream) {
+            setOs('iOS');
+        } else if (/android/i.test(userAgent)) {
+            setOs('Android');
+        }
+    }, []);
+
+    const iosIcon = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" class="w-6 h-6 inline-block mx-1">
+            <path d="M12 20v-6M9 17l3-3 3 3"/>
+            <path d="M18 8h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2h2"/>
+        </svg>
+    `;
+
+    const androidIcon = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" class="w-5 h-5 inline-block">
+            <path d="M12 5v14M12 5l-4 4M12 5l4 4"/>
+        </svg>
+    `;
+
+    if (!os) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-70 z-50 flex items-center justify-center p-4 animate-fade-in" onClick={onClose}>
+            <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-sm text-center text-gray-200" onClick={e => e.stopPropagation()}>
+                <h3 className="text-xl font-bold text-yellow-300 mb-3">Get Fullscreen Experience</h3>
+                <p className="mb-4">For the best experience, add this app to your home screen.</p>
+                {os === 'iOS' && (
+                    <div className="bg-gray-700 p-3 rounded-lg">
+                        <p>1. Tap the <span dangerouslySetInnerHTML={{ __html: iosIcon }} /> Share button.</p>
+                        <p>2. Scroll down and tap 'Add to Home Screen'.</p>
+                    </div>
+                )}
+                {os === 'Android' && (
+                    <div className="bg-gray-700 p-3 rounded-lg">
+                        <p>1. Tap the three-dots menu icon.</p>
+                        <p>2. Tap 'Add to Home Screen' or 'Install app'.</p>
+                    </div>
+                )}
+                <button onClick={onClose} className="mt-5 bg-yellow-400 text-gray-900 font-bold py-2 px-4 rounded-lg hover:bg-yellow-300 transition-colors">
+                    Got it!
+                </button>
+            </div>
+        </div>
+    );
+};
+
+// --- END INSTALL PROMPT ---
+
+// Inlined from App.tsx
+const App = () => {
+  const [maxNumber, setMaxNumber] = useState(1000);
+  const [mode, setMode] = useState('wave');
+  const [uiVisible, setUiVisible] = useState(true);
+  const [colorTheme, setColorTheme] = useState('Spectrum');
+  const [animationStyle, setAnimationStyle] = useState('Breathe (Resonant)');
+  const [shader, setShader] = useState('None');
+  const [showBreathingText, setShowBreathingText] = useState(true);
+  const [showJourneyPrime, setShowJourneyPrime] = useState(false);
+  const [isHarmonic, setIsHarmonic] = useState(true);
+  const [showInstallPrompt, setShowInstallPrompt] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
+  const uiVisibilityTimer = useRef(null);
+
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+  const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+  const isFullscreenApiSupported = document.fullscreenEnabled !== undefined;
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const setHeight = () => root.style.setProperty('--vh', `${window.innerHeight}px`);
+    setHeight();
+    window.addEventListener('resize', setHeight);
+    return () => window.removeEventListener('resize', setHeight);
+  }, []);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+        setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+  
+  const handleToggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+            console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+        });
+    } else {
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        }
+    }
+  };
+
+  const showUiAndResetTimer = useCallback(() => {
+    setUiVisible(true);
+    if (uiVisibilityTimer.current) {
+      clearTimeout(uiVisibilityTimer.current);
+    }
+    uiVisibilityTimer.current = window.setTimeout(() => {
+      setUiVisible(false);
+    }, 10000);
+  }, []);
+
+  useEffect(() => {
+    showUiAndResetTimer();
+    window.addEventListener('mousemove', showUiAndResetTimer);
+    window.addEventListener('mousedown', showUiAndResetTimer);
+    window.addEventListener('touchstart', showUiAndResetTimer);
+    window.addEventListener('wheel', showUiAndResetTimer, { passive: true });
+    return () => {
+      if (uiVisibilityTimer.current) {
+        clearTimeout(uiVisibilityTimer.current);
+      }
+      window.removeEventListener('mousemove', showUiAndResetTimer);
+      window.removeEventListener('mousedown', showUiAndResetTimer);
+      window.removeEventListener('touchstart', showUiAndResetTimer);
+      window.removeEventListener('wheel', showUiAndResetTimer);
+    };
+  }, [showUiAndResetTimer]);
+
+  const handleSetMode = (newMode) => {
+    if (newMode === 'wave') {
+      setMaxNumber(1000);
+    } else if (newMode === 'spiral') {
+      setMaxNumber(3000);
+    } else if (newMode === 'wave-field') {
+      setMaxNumber(800);
+    }
+    setMode(newMode);
+  };
+
+  return (
+    <main className="relative bg-gray-900 text-white overflow-hidden flex flex-col" style={{ height: 'var(--vh, 100vh)' }}>
+      <div
+        className={`absolute top-4 left-4 z-20 text-left p-2 md:p-4 transition-opacity duration-500 ${
+          uiVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+      >
+        <h1 className="text-2xl md:text-4xl font-bold text-yellow-300 drop-shadow-lg">
+          Prime Breath
+        </h1>
+        <p className="text-sm md:text-base text-gray-300 max-w-md mt-1">
+          A prime number visualization meditation tool.
+        </p>
+        <p className="text-xs md:text-sm text-gray-400 max-w-md mt-4">
+            Inspired by <a href="https://theprimescalarfield.com/" target="_blank" rel="noopener noreferrer" className="text-yellow-400 hover:text-yellow-300 underline">The Prime Scalar Field</a>. Watch the <a href="https://www.youtube.com/watch?v=Y9f-Gq42Pxg" target="_blank" rel="noopener noreferrer" className="text-yellow-400 hover:text-yellow-300 underline">video</a> to learn more.
+        </p>
+      </div>
+
+      <div
+        className={`absolute top-4 right-4 z-20 flex items-center bg-gray-800 bg-opacity-70 backdrop-blur-sm rounded-lg shadow-lg p-1 transition-opacity duration-500 ${
+          uiVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+      >
+        <button onClick={() => handleSetMode('spiral')} className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${mode === 'spiral' ? 'bg-yellow-400 text-gray-900' : 'text-gray-300 hover:bg-gray-700'}`}>Spiral</button>
+        <button onClick={() => handleSetMode('wave')} className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${mode === 'wave' ? 'bg-yellow-400 text-gray-900' : 'text-gray-300 hover:bg-gray-700'}`}>Wave</button>
+        <button onClick={() => handleSetMode('wave-field')} className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${mode === 'wave-field' ? 'bg-yellow-400 text-gray-900' : 'text-gray-300 hover:bg-gray-700'}`}>2D Field</button>
+        {isMobile && !isStandalone && (
+            <button onClick={() => setShowInstallPrompt(true)} className="ml-2 text-gray-300 hover:text-white" title="Install App">
+                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </button>
+        )}
+         {isFullscreenApiSupported && (
+            <button onClick={handleToggleFullscreen} className="ml-2 text-gray-300 hover:text-white" title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}>
+                {isFullscreen ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>
+                ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                )}
+            </button>
+        )}
+      </div>
+
+      <div className="flex-grow w-full h-full z-0">
+        {mode === 'spiral' ? (
+          <PrimeSpiral count={maxNumber} animationStyle={animationStyle} colorTheme={colorTheme} shader={shader} showBreathingText={showBreathingText} showJourneyPrime={showJourneyPrime} isHarmonic={isHarmonic} />
+        ) : mode === 'wave' ? (
+          <PrimeWave maxCount={maxNumber} colorTheme={colorTheme} animationStyle={animationStyle} shader={shader} showBreathingText={showBreathingText} showJourneyPrime={showJourneyPrime} isHarmonic={isHarmonic} />
+        ) : mode === 'wave-field' ? (
+          <PrimeWaveField maxCount={maxNumber} colorTheme={colorTheme} animationStyle={animationStyle} shader={shader} showBreathingText={showBreathingText} showJourneyPrime={showJourneyPrime} isHarmonic={isHarmonic} />
+        ) : null}
+      </div>
+      <Controls
+        value={maxNumber}
+        setValue={setMaxNumber}
+        mode={mode}
+        colorTheme={colorTheme}
+        setColorTheme={setColorTheme}
+        animationStyle={animationStyle}
+        setAnimationStyle={setAnimationStyle}
+        shader={shader}
+        setShader={setShader}
+        showBreathingText={showBreathingText}
+        setShowBreathingText={setShowBreathingText}
+        showJourneyPrime={showJourneyPrime}
+        setShowJourneyPrime={setShowJourneyPrime}
+        isHarmonic={isHarmonic}
+        setIsHarmonic={setIsHarmonic}
+        uiVisible={uiVisible}
+      />
+      {showInstallPrompt && <InstallPrompt onClose={() => setShowInstallPrompt(false)} />}
+      <style>{`
+          .animate-fade-in {
+              animation: fadeIn 0.3s ease-out;
+          }
+          @keyframes fadeIn {
+              from { opacity: 0; }
+              to { opacity: 1; }
+          }
+      `}</style>
+    </main>
+  );
+};
+
+
+// Inlined from index.tsx
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error("Could not find root element to mount to");
+}
+
+const root = ReactDOM.createRoot(rootElement);
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+// --- SCRIPT END ---
+    </script>
+</body>
+</html>
