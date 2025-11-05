@@ -1,5 +1,5 @@
 {
-  "name": "Prime Breath",
+  "name": "Prime Mind",
   "description": "A prime number visualization meditation tool. Choose a visualization and a breathing exercise to begin your journey into the patterns of primes.",
   "requestFramePermissions": [
     "microphone"
